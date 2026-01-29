@@ -7,7 +7,8 @@ use crate::{AsAssetId, Asset, AssetId};
 use bevy_ecs::component::Components;
 use bevy_ecs::{
     archetype::Archetype,
-    component::{ComponentId, Tick},
+    change_detection::Tick,
+    component::ComponentId,
     prelude::{Entity, Resource, World},
     query::{FilteredAccess, QueryData, QueryFilter, ReadFetch, WorldQuery},
     storage::{Table, TableRow},
@@ -148,7 +149,7 @@ pub struct AssetChangedState<A: AsAssetId> {
 }
 
 #[expect(unsafe_code, reason = "WorldQuery is an unsafe trait.")]
-/// SAFETY: `ROQueryFetch<Self>` is the same as `QueryFetch<Self>`
+// SAFETY: `ROQueryFetch<Self>` is the same as `QueryFetch<Self>`
 unsafe impl<A: AsAssetId> WorldQuery for AssetChanged<A> {
     type Fetch<'w> = AssetChangedFetch<'w, A>;
 
@@ -158,9 +159,9 @@ unsafe impl<A: AsAssetId> WorldQuery for AssetChanged<A> {
         fetch
     }
 
-    unsafe fn init_fetch<'w>(
+    unsafe fn init_fetch<'w, 's>(
         world: UnsafeWorldCell<'w>,
-        state: &Self::State,
+        state: &'s Self::State,
         last_run: Tick,
         this_run: Tick,
     ) -> Self::Fetch<'w> {
@@ -201,9 +202,9 @@ unsafe impl<A: AsAssetId> WorldQuery for AssetChanged<A> {
 
     const IS_DENSE: bool = <&A>::IS_DENSE;
 
-    unsafe fn set_archetype<'w>(
+    unsafe fn set_archetype<'w, 's>(
         fetch: &mut Self::Fetch<'w>,
-        state: &Self::State,
+        state: &'s Self::State,
         archetype: &'w Archetype,
         table: &'w Table,
     ) {
@@ -215,7 +216,11 @@ unsafe impl<A: AsAssetId> WorldQuery for AssetChanged<A> {
         }
     }
 
-    unsafe fn set_table<'w>(fetch: &mut Self::Fetch<'w>, state: &Self::State, table: &'w Table) {
+    unsafe fn set_table<'w, 's>(
+        fetch: &mut Self::Fetch<'w>,
+        state: &Self::State,
+        table: &'w Table,
+    ) {
         if let Some(inner) = &mut fetch.inner {
             // SAFETY: We delegate to the inner `set_table` for `A`
             unsafe {
@@ -225,7 +230,7 @@ unsafe impl<A: AsAssetId> WorldQuery for AssetChanged<A> {
     }
 
     #[inline]
-    fn update_component_access(state: &Self::State, access: &mut FilteredAccess<ComponentId>) {
+    fn update_component_access(state: &Self::State, access: &mut FilteredAccess) {
         <&A>::update_component_access(&state.asset_id, access);
         access.add_resource_read(state.resource_id);
     }
@@ -259,12 +264,13 @@ unsafe impl<A: AsAssetId> WorldQuery for AssetChanged<A> {
 }
 
 #[expect(unsafe_code, reason = "QueryFilter is an unsafe trait.")]
-/// SAFETY: read-only access
+// SAFETY: read-only access
 unsafe impl<A: AsAssetId> QueryFilter for AssetChanged<A> {
     const IS_ARCHETYPAL: bool = false;
 
     #[inline]
     unsafe fn filter_fetch(
+        state: &Self::State,
         fetch: &mut Self::Fetch<'_>,
         entity: Entity,
         table_row: TableRow,
@@ -272,8 +278,8 @@ unsafe impl<A: AsAssetId> QueryFilter for AssetChanged<A> {
         fetch.inner.as_mut().is_some_and(|inner| {
             // SAFETY: We delegate to the inner `fetch` for `A`
             unsafe {
-                let handle = <&A>::fetch(inner, entity, table_row);
-                fetch.check.has_changed(handle)
+                let handle = <&A>::fetch(&state.asset_id, inner, entity, table_row);
+                handle.is_some_and(|handle| fetch.check.has_changed(handle))
             }
         })
     }
@@ -282,17 +288,18 @@ unsafe impl<A: AsAssetId> QueryFilter for AssetChanged<A> {
 #[cfg(test)]
 #[expect(clippy::print_stdout, reason = "Allowed in tests.")]
 mod tests {
-    use crate::{AssetEventSystems, AssetPlugin, Handle};
+    use crate::tests::create_app;
+    use crate::{AssetEventSystems, Handle};
     use alloc::{vec, vec::Vec};
     use core::num::NonZero;
     use std::println;
 
     use crate::{AssetApp, Assets};
-    use bevy_app::{App, AppExit, PostUpdate, Startup, TaskPoolPlugin, Update};
+    use bevy_app::{App, AppExit, PostUpdate, Startup, Update};
     use bevy_ecs::schedule::IntoScheduleConfigs;
     use bevy_ecs::{
         component::Component,
-        event::EventWriter,
+        message::MessageWriter,
         resource::Resource,
         system::{Commands, IntoSystem, Local, Query, Res, ResMut},
     };
@@ -315,10 +322,8 @@ mod tests {
     }
 
     fn run_app<Marker>(system: impl IntoSystem<(), (), Marker>) {
-        let mut app = App::new();
-        app.add_plugins((TaskPoolPlugin::default(), AssetPlugin::default()))
-            .init_asset::<MyAsset>()
-            .add_systems(Update, system);
+        let mut app = create_app().0;
+        app.init_asset::<MyAsset>().add_systems(Update, system);
         app.update();
     }
 
@@ -328,7 +333,7 @@ mod tests {
     fn handle_filter_pos_ok() {
         fn compatible_filter(
             _query: Query<&mut MyComponent, AssetChanged<MyComponent>>,
-            mut exit: EventWriter<AppExit>,
+            mut exit: MessageWriter<AppExit>,
         ) {
             exit.write(AppExit::Error(NonZero::<u8>::MIN));
         }
@@ -399,10 +404,9 @@ mod tests {
 
     #[test]
     fn added() {
-        let mut app = App::new();
+        let mut app = create_app().0;
 
-        app.add_plugins((TaskPoolPlugin::default(), AssetPlugin::default()))
-            .init_asset::<MyAsset>()
+        app.init_asset::<MyAsset>()
             .insert_resource(Counter(vec![0, 0, 0, 0]))
             .add_systems(Update, add_some)
             .add_systems(PostUpdate, count_update.after(AssetEventSystems));
@@ -422,10 +426,9 @@ mod tests {
 
     #[test]
     fn changed() {
-        let mut app = App::new();
+        let mut app = create_app().0;
 
-        app.add_plugins((TaskPoolPlugin::default(), AssetPlugin::default()))
-            .init_asset::<MyAsset>()
+        app.init_asset::<MyAsset>()
             .insert_resource(Counter(vec![0, 0]))
             .add_systems(
                 Startup,
