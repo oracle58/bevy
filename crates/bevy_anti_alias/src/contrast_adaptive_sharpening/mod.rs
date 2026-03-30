@@ -16,6 +16,7 @@ use bevy_render::{
         *,
     },
     renderer::RenderDevice,
+    sync_component::SyncComponent,
     view::{ExtractedView, ViewTarget},
     Render, RenderApp, RenderStartup, RenderSystems,
 };
@@ -73,6 +74,10 @@ pub struct DenoiseCas(bool);
 #[derive(Component, ShaderType, Clone)]
 pub struct CasUniform {
     sharpness: f32,
+}
+
+impl SyncComponent for ContrastAdaptiveSharpening {
+    type Target = (DenoiseCas, CasUniform);
 }
 
 impl ExtractComponent for ContrastAdaptiveSharpening {

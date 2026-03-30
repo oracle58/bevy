@@ -29,6 +29,8 @@ plugin_group! {
         bevy_asset:::AssetPlugin,
         #[cfg(feature = "bevy_scene")]
         bevy_scene:::ScenePlugin,
+        #[cfg(feature = "bevy_scene2")]
+        bevy_scene2:::ScenePlugin,
         // NOTE: WinitPlugin needs to be after AssetPlugin because of custom cursors.
         #[cfg(feature = "bevy_winit")]
         bevy_winit:::WinitPlugin,
@@ -65,12 +67,10 @@ plugin_group! {
         bevy_ui:::UiPlugin,
         #[cfg(feature = "bevy_ui_render")]
         bevy_ui_render:::UiRenderPlugin,
-        #[cfg(feature = "bevy_pbr")]
-        bevy_pbr:::PbrPlugin,
-        // NOTE: Load this after renderer initialization so that it knows about the supported
-        // compressed texture formats.
         #[cfg(feature = "bevy_gltf")]
         bevy_gltf:::GltfPlugin,
+        #[cfg(feature = "bevy_pbr")]
+        bevy_pbr:::PbrPlugin,
         #[cfg(feature = "bevy_audio")]
         bevy_audio:::AudioPlugin,
         #[cfg(feature = "bevy_gilrs")]
